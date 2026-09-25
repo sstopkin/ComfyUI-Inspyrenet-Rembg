@@ -7,6 +7,28 @@ import os
 from typing import List, Tuple, Optional, Union
 import logging
 import gc
+import folder_paths
+
+# Registers a "transparent_background" models folder (models/transparent_background/)
+# so alternate checkpoints (e.g. transparent-background's own "fast"/"base-nightly"
+# variants) can be dropped in and picked from a dropdown instead of hardcoding a path.
+# Idea from cfl-chenfangliang/ComfyUI-Inspyrenet-Rembg-opt.
+if "transparent_background" not in folder_paths.folder_names_and_paths:
+    folder_paths.folder_names_and_paths["transparent_background"] = (
+        [os.path.join(folder_paths.models_dir, "transparent_background")],
+        folder_paths.supported_pt_extensions,
+    )
+
+
+def get_available_models():
+    """"(default)" first so the dropdown is never empty and never forces a
+    choice — picking it just means "use Remover()'s own default resolution",
+    same behaviour as before this option existed."""
+    try:
+        models = folder_paths.get_filename_list("transparent_background")
+    except Exception:
+        models = []
+    return ["(default)"] + models
 
 # List of available fonts - update this based on your font files
 # Get the directory where the script is located
@@ -24,10 +46,10 @@ AVAILABLE_FONTS = [f.split(".")[0] for f in os.listdir(
 _remover_cache = {}
 
 
-def get_cached_remover(jit):
-    key = bool(jit)
+def get_cached_remover(jit, ckpt=None):
+    key = (bool(jit), ckpt)
     if key not in _remover_cache:
-        _remover_cache[key] = Remover(jit=key)
+        _remover_cache[key] = Remover(jit=key[0], ckpt=ckpt)
     return _remover_cache[key]
 
 
@@ -241,6 +263,7 @@ class InspyrenetRembgAdvanced:
                 "gradient_direction": (["horizontal", "vertical"],),
                 "background_image": ("IMAGE",),
                 "text_config_batch": ("TEXT_CONFIG_BATCH",),
+                "model": (get_available_models(), {"tooltip": "(default) uses Remover()'s own resolution. Otherwise pick a checkpoint placed in models/transparent_background/."}),
             }
         }
 
@@ -249,16 +272,17 @@ class InspyrenetRembgAdvanced:
     CATEGORY = "image"
 
     def remove_background(self, image, threshold, torchscript_jit, output_type, background_mode,
-                          batch_size=10, background_color="#000000", gradient_color1="#000000", 
-                          gradient_color2="#FFFFFF", gradient_direction="horizontal", 
-                          background_image=None, text_config_batch=None):
+                          batch_size=10, background_color="#000000", gradient_color1="#000000",
+                          gradient_color2="#FFFFFF", gradient_direction="horizontal",
+                          background_image=None, text_config_batch=None, model="(default)"):
         img_list = []
         mask_list = []
-        
+
         # Initialize remover once for all batches
         remover = None
         if output_type != "original":
-            remover = get_cached_remover(torchscript_jit == "on")
+            ckpt_path = folder_paths.get_full_path_or_raise("transparent_background", model) if model != "(default)" else None
+            remover = get_cached_remover(torchscript_jit == "on", ckpt=ckpt_path)
         
         total_images = len(image)
         
@@ -397,6 +421,7 @@ class VideoTextOverlay:
                 "gradient_direction": (["horizontal", "vertical"],),
                 "background_images": ("IMAGE",),
                 "text_config_batch": ("TEXT_CONFIG_BATCH",),
+                "model": (get_available_models(), {"tooltip": "(default) uses Remover()'s own resolution. Otherwise pick a checkpoint placed in models/transparent_background/."}),
             }
         }
 
@@ -515,11 +540,13 @@ class VideoTextOverlay:
                        gradient_color2: str = "#FFFFFF",
                        gradient_direction: str = "horizontal",
                        background_images: Optional[torch.Tensor] = None,
-                       text_config_batch: Optional[List[dict]] = None) -> Tuple[torch.Tensor]:
+                       text_config_batch: Optional[List[dict]] = None,
+                       model: str = "(default)") -> Tuple[torch.Tensor]:
         """Process batch of images with effects"""
         try:
             # Initialize the background remover once
-            remover = get_cached_remover(torchscript_jit == "on")
+            ckpt_path = folder_paths.get_full_path_or_raise("transparent_background", model) if model != "(default)" else None
+            remover = get_cached_remover(torchscript_jit == "on", ckpt=ckpt_path)
             processed_frames = []
             
             total_frames = len(images)
