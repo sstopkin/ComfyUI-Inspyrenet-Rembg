@@ -17,6 +17,19 @@ fonts_directory = os.path.join(script_directory, "fonts")
 AVAILABLE_FONTS = [f.split(".")[0] for f in os.listdir(
     fonts_directory) if f.endswith(".ttf") or f.endswith(".otf")]
 
+# Remover() init is cheap relative to process() (~0.5s vs several seconds per
+# image, measured), but still wasteful to pay on every single node call within
+# the same ComfyUI session. Cache one instance per jit mode instead of creating
+# a fresh one each time.
+_remover_cache = {}
+
+
+def get_cached_remover(jit):
+    key = bool(jit)
+    if key not in _remover_cache:
+        _remover_cache[key] = Remover(jit=key)
+    return _remover_cache[key]
+
 
 def tensor2pil(image):
     return Image.fromarray(np.clip(255. * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
@@ -245,7 +258,7 @@ class InspyrenetRembgAdvanced:
         # Initialize remover once for all batches
         remover = None
         if output_type != "original":
-            remover = Remover(jit=True if torchscript_jit == "on" else False)
+            remover = get_cached_remover(torchscript_jit == "on")
         
         total_images = len(image)
         
@@ -506,7 +519,7 @@ class VideoTextOverlay:
         """Process batch of images with effects"""
         try:
             # Initialize the background remover once
-            remover = Remover(jit=True if torchscript_jit == "on" else False)
+            remover = get_cached_remover(torchscript_jit == "on")
             processed_frames = []
             
             total_frames = len(images)
